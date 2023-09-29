@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="dist/jq/jquery.mobile-1.4.2.min.css">
+  <link rel="stylesheet" href="dist/main.css">
+  <script src="dist/jq/js/jquery.js"></script>
+  <script src="dist/jq/js/jquery.mobile-1.4.2.min.js"></script>
+  <script src="dist/eventemitter2.js"></script>
+  <script src="roslib.min.js"></script>
+
+
+
+  <script type="text/javascript">
+
+    try {
+      var urlStr = document.URL;
+      var res = urlStr.split("http://");
+      var urlStr = res[1].split(":");
+      var ip = urlStr[0];
+    }
+    catch (error) {
+      var ip = '0.0.0.0'; //'0.0.0.0'; //urlStr[0];
+    }
+
+		var recordingNow = 0;
+
+		var streamImageRawSrc = 'http://' + ip.toString() + ':7070/stream?topic=/image_color&width=512&height=375';
+
+    $(document).ready(function()
+    {    
+      //The the Ip address of the target robot from uri.
+      $.urlParam = function(name)
+      {
+        var results = new RegExp('[\?&]' + name + '=([^&#]*)').exec(window.location.href);
+        if (results==null)
+         return null;
+       else
+         return results[1] || 0;
+      }
+
+      // Create the ROS connection handler
+      var ros = new ROSLIB.Ros({
+        // url : 'ws://0.0.0.0:9090'
+        url : 'ws://' + ip + ':9090'
+      });
+
+      var _d = new Date()
+      var connection_msg_default = 'Not connected to CamAlien'
+      var connection_msg = _d.toLocaleString() + ': ' + connection_msg_default;
+      var alive_msg = ''
+      var error_msg = ''
+      function setSystemStatus() {
+        let status_msg = ''
+        if (error_msg) {
+          status_msg += error_msg + '\n';
+        }
+        if (connection_msg) {
+          status_msg += connection_msg  + '\n';
+        } else {
+          let d = new Date()
+          status_msg += d.toLocaleTimeString() + ': Unknown connection status to CamAlien!'
+        }
+        if (alive_msg) {
+          status_msg += alive_msg + '\n';
+        }
+        
+
+        $('#ros_stat').val(status_msg)
+      }
+
+      function objToString (obj) {
+        let str = '';
+        for (const [p, val] of Object.entries(obj)) {
+            str += `${p}::${val}\n`;
+        }
+        return str;
+      }
+
+      // If there is an error on the backend, an 'error' emit will be emitted.
+      ros.on('error', function(error) {
+        console.log('Error connecting to websocket server:', error);
+        var d = new Date();
+        error_msg += d.toLocaleTimeString() + ': A connection error occurred!';
+        setSystemStatus()
+      });
+
+      ros.on('connection', function(event) {
+        console.log(event);
+        let d = new Date()
+        connection_msg = d.toLocaleTimeString() + ': Connected to CamAlien';
+        setSystemStatus()
+      });
+
+      ros.on('close', function(event){
+        console.log(event)
+        let d = new Date()
+        connection_msg = d.toLocaleTimeString() + ': Not connected to CamAlien';
+        setSystemStatus()
+        //$('#ros_stat').val('Not connected!\n' + $('#ros_stat').val())
+      });
+
+      /*
+        Status LEDs
+      */
+      var ledRed_On = false;
+      var ledYellow_On = false;
+      var ledGreen_On = false;
+      var ledRed_toggle = false;
+      var ledYellow_toggle = false;
+      var ledGreen_toggle = false;
+      var aliveRecieved = false;
+      setInterval(function () {
+        if (ledRed_On) {
+          $('#LedRed').css('color', 'red');
+        } else {
+          $('#LedRed').css('color', 'black');
+        }
+        if (ledYellow_On) {
+          $('#LedYellow').css('color', 'yellow');
+        } else {
+          $('#LedYellow').css('color', 'black');
+        }
+        if (ledGreen_On) {
+          $('#LedGreen').css('color', 'green');
+        } else {
+          $('#LedGreen').css('color', 'black');
+        }
+
+        if (ledRed_toggle) {
+          ledRed_On = !ledRed_On;
+        }
+        if (ledYellow_toggle) {
+          ledYellow_On = !ledYellow_On;
+        }
+        if (ledGreen_toggle) {
+          ledGreen_On = !ledGreen_On;
+        }
+      }, 300);
+      setInterval(function(){
+        // If we have not recieved an "is alive" message in the last 5 seconds, turn off green led.
+        if (!aliveRecieved)
+        {
+          ledGreen_On = false;
+          ledGreen_toggle = false;
+        }
+        aliveRecieved = false;
+      }, 5000)
+      var IS_ALIVE_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name: "/alive/is_alive",
+        messageType : "std_msgs/String",
+        throttle_rate: 200,
+        queue_size: 1})
+        IS_ALIVE_TOPIC.subscribe(function(msg){
+          aliveRecieved = true;
+          let d = new Date();
+          if (msg.data !== "") {
+            ledGreen_toggle = true;
+            alive_msg = d.toLocaleTimeString() + ': ' + msg.data;
+          } else {
+            ledGreen_On = true;
+            ledGreen_toggle = false;
+            alive_msg = "";
+          }
+          setSystemStatus()
+          //$('#ros_stat').val(msg.data)
+
+      })
+      var LED_RED_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name: "/remote/led_red",
+        messageType : "std_msgs/Bool",
+        throttle_rate: 200,
+        queue_size: 1})
+        LED_RED_TOPIC.subscribe(function(msg){
+          ledRed_On = msg.data;
+          ledRed_toggle = false;
+      })
+      var LED_RED_ON_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name: "/remote/led_red_on",
+        messageType : "std_msgs/Empty",
+        throttle_rate: 200,
+        queue_size: 1})
+        LED_RED_ON_TOPIC.subscribe(function(msg){
+          ledRed_On = true;
+          ledRed_toggle = false;
+      })
+      var LED_RED_OFF_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name: "/remote/led_red_off",
+        messageType : "std_msgs/Empty",
+        throttle_rate: 200,
+        queue_size: 1})
+        LED_RED_OFF_TOPIC.subscribe(function(msg){
+          ledRed_On = false;
+          ledRed_toggle = false;
+      })
+      var LED_RED_BLINK_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name: "/remote/led_red_blink",
+        messageType : "std_msgs/Empty",
+        throttle_rate: 200,
+        queue_size: 1})
+        LED_RED_BLINK_TOPIC.subscribe(function(msg){
+          ledRed_toggle = true;
+      })
+      var LED_YELLOW_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name: "/remote/led_yellow",
+        messageType : "std_msgs/Bool",
+        throttle_rate: 200,
+        queue_size: 1})
+        LED_YELLOW_TOPIC.subscribe(function(msg){
+          ledYellow_On = msg.data;
+          ledYellow_toggle = false;
+      })
+      var LED_YELLOW_ON_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name: "/remote/led_yellow_on",
+        messageType : "std_msgs/Empty",
+        throttle_rate: 200,
+        queue_size: 1})
+        LED_YELLOW_ON_TOPIC.subscribe(function(msg){
+          ledYellow_On = true;
+          ledYellow_toggle = false;
+      })
+      var LED_YELLOW_OFF_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name: "/remote/led_yellow_off",
+        messageType : "std_msgs/Empty",
+        throttle_rate: 200,
+        queue_size: 1})
+        LED_YELLOW_OFF_TOPIC.subscribe(function(msg){
+          ledYellow_On = false;
+          ledYellow_toggle = false;
+      })
+      var LED_YELLOW_BLINK_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name: "/remote/led_yellow_blink",
+        messageType : "std_msgs/Empty",
+        throttle_rate: 200,
+        queue_size: 1})
+        LED_YELLOW_BLINK_TOPIC.subscribe(function(msg){
+          ledYellow_toggle = true;
+      })
+      var LED_GREEN_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name: "/remote/led_green",
+        messageType : "std_msgs/Bool",
+        throttle_rate: 200,
+        queue_size: 1})
+        LED_GREEN_TOPIC.subscribe(function(msg){
+          // Do nothing, as the green LED should not be controlled directly
+          //ledGreen_On = msg.data;
+          //ledGreen_toggle = false;
+      })
+      var LED_GREEN_ON_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name: "/remote/led_green_on",
+        messageType : "std_msgs/Empty",
+        throttle_rate: 200,
+        queue_size: 1})
+        LED_GREEN_ON_TOPIC.subscribe(function(msg){
+          // Do nothing, as the green LED should not be controlled directly
+          //ledGreen_On = true;
+          //ledGreen_toggle = false;
+      })
+      var LED_GREEN_OFF_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name: "/remote/led_green_off",
+        messageType : "std_msgs/Empty",
+        throttle_rate: 200,
+        queue_size: 1})
+        LED_GREEN_OFF_TOPIC.subscribe(function(msg){
+          // Do nothing, as the green LED should not be controlled directly
+          //ledGreen_On = false;
+          //ledGreen_toggle = false;
+      })
+      var LED_GREEN_BLINK_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name: "/remote/led_green_blink",
+        messageType : "std_msgs/Empty",
+        throttle_rate: 200,
+        queue_size: 1})
+        LED_GREEN_BLINK_TOPIC.subscribe(function(msg){
+          // Do nothing, as the green LED should not be controlled directly
+          //ledGreen_toggle = true;
+      })
+
+
+      /*
+        MANUAL TRIGGER
+      */
+      var shutter_topic = new ROSLIB.Topic({
+        ros : ros,
+        name : '/remote/shutter',
+        messageType : 'std_msgs/String',
+        queue_size: 1
+      });
+
+      shutter_topic.advertise();
+
+      var sendShutterFlag = false;
+      var shutter_msg = new ROSLIB.Message({
+        data: 'webgui'
+      });
+      setInterval(function() {
+        if (sendShutterFlag) {
+          shutter_topic.publish(shutter_msg);
+        }
+
+      }, 500);
+
+      $("#sendShutter").on("mousedown touchstart", function() {
+        sendShutterFlag = true;
+        shutter_topic.publish(shutter_msg);
+      });
+      $("#sendShutter").on("mouseup mouseleave touchend touchmove", function() {
+        sendShutterFlag = false;
+      });
+
+      /*
+        Continuous recording
+      */
+      var SET_CONTINUOUS_RECORDING_ON_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name : '/image_writer/toggle_continuous_recording',
+        messageType : 'std_msgs/Empty'
+      });
+      SET_CONTINUOUS_RECORDING_ON_TOPIC.advertise();
+      var CONT_REC_EXT_SET = false;
+      $('#continuous_recording').on('change', function() {
+        if (!CONT_REC_EXT_SET) {
+          if (this.value == 'on') {
+            msg_val = true;
+          } else {
+            msg_val = false;
+          }
+          SET_CONTINUOUS_RECORDING_ON_TOPIC.publish();
+        } else {
+          CONT_REC_EXT_SET = false;
+        }
+      });
+
+      var IS_CONTINUOUS_RECORDING_ON_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name: "/image_writer/is_continuous_recording_on",
+        messageType : "std_msgs/Bool",
+        throttle_rate: 200,
+        queue_size: 1})
+      IS_CONTINUOUS_RECORDING_ON_TOPIC.subscribe(function(msg){
+          CONT_REC_EXT_SET = true;
+          if (msg.data) {
+            $('#continuous_recording').val("on").change();
+          } else {
+            $('#continuous_recording').val("off").change();
+          }
+      });
+
+      var OBJ_BLUR_QUEUE = new ROSLIB.Topic({
+        ros : ros,
+        name: "/object_blur/queue_size",
+        messageType : "std_msgs/Int32",
+        throttle_rate: 1000,
+        queue_size: 1})
+      OBJ_BLUR_QUEUE.subscribe(function(msg){
+        $('#obj_blur_queue').text(parseInt(msg.data))
+      })
+      var STORED_IMAGE_COUNT = new ROSLIB.Topic({
+        ros : ros,
+        name: "/object_blur/image_count",
+        messageType : "std_msgs/Int32",
+        throttle_rate: 1000,
+        queue_size: 1})
+        STORED_IMAGE_COUNT.subscribe(function(msg){
+        $('#stored_image_count').text(parseInt(msg.data))
+      })
+
+      /*
+        GNSS SECTION
+      */
+     var valid_coordinates = false;
+      var GNSS_FIX_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name: "/ublox/fix",
+        messageType : "sensor_msgs/NavSatFix",
+        throttle_rate: 1000,
+        queue_size: 1})
+      GNSS_FIX_TOPIC.subscribe(function(msg){
+        if (valid_coordinates) {
+          $('#gnss_latitude').text((parseFloat(msg.latitude) || 0).toFixed(7) + '°');
+          $('#gnss_longitude').text((parseFloat(msg.longitude) || 0).toFixed(7) + '°');
+          $('#gnss_altitude').text((parseFloat(msg.altitude) || 0).toFixed(1) + ' m');
+        }
+        else {
+          $('#gnss_latitude').text('N/A');
+          $('#gnss_longitude').text('N/A');
+          $('#gnss_altitude').text('N/A');
+        }
+      })
+      var VELOCITY_FIX_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name: "/ublox/fix_velocity",
+        messageType : "geometry_msgs/TwistWithCovarianceStamped",
+        throttle_rate: 1000,
+        queue_size: 1})
+      VELOCITY_FIX_TOPIC.subscribe(function(msg){
+        //var speed = Math.sqrt(parseFloat(msg.twist.linear.x)**2 + parseFloat(msg.twist.linear.y)**2) * 0.5144444 * 3.6
+        //$('#gnss_speed').text((speed || 0).toFixed(1) + ' km/h')
+        if (valid_coordinates) {
+          var speed_mps = Math.sqrt(parseFloat(msg.twist.twist.linear.x)**2 + parseFloat(msg.twist.twist.linear.y)**2)
+          var speed_kmh = speed_mps * 3.6
+          $('#gnss_speed_ms').text((speed_mps || 0).toFixed(1) + ' m/s')
+          $('#gnss_speed_kmh').text((speed_kmh || 0).toFixed(1) + ' km/h')
+        }
+        else {
+          $('#gnss_speed_ms').text('N/A')
+          $('#gnss_speed_kmh').text('N/A')
+        }
+      })
+      var GNSS_LOG_VALID_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name: "/gnss_log/valid_coordinates",
+        messageType : "std_msgs/Bool",
+        throttle_rate: 1000,
+        queue_size: 1})
+        GNSS_LOG_VALID_TOPIC.subscribe(function(msg){
+          valid_coordinates = msg.data;
+      })
+      
+
+      /*
+        STATS SECTION
+      */
+      var STAT_INTERN_DISK = new ROSLIB.Topic({
+        ros : ros,
+        name: "/stats/int_disk_percent",
+        messageType : "std_msgs/Float32",
+        throttle_rate: 1000,
+        queue_size: 1})
+      STAT_INTERN_DISK.subscribe(function(msg){
+        $('#stats_int_disk').text((parseFloat(msg.data) || 0).toFixed(1) + '%')
+      })
+
+      var STAT_EXTERN_DISK = new ROSLIB.Topic({
+        ros : ros,
+        name: "/stats/ext_disk_percent",
+        messageType : "std_msgs/Float32",
+        throttle_rate: 1000,
+        queue_size: 1})
+      STAT_EXTERN_DISK.subscribe(function(msg){
+        $('#stats_ext_disk').text((parseFloat(msg.data) ).toFixed(1) + '%')
+      })
+      var STAT_CAM_TEMP = new ROSLIB.Topic({
+        ros : ros,
+        name: "/cam_temperature",
+        messageType : "std_msgs/Float32",
+        throttle_rate: 1000,
+        queue_size: 1})
+        STAT_CAM_TEMP.subscribe(function(msg){
+        $('#stats_cam_temp').text((parseFloat(msg.data) ).toFixed(1) + '℃')
+      })
+      var STAT_CPU_TEMP = new ROSLIB.Topic({
+        ros : ros,
+        name: "/stats/cpu_temp_max",
+        messageType : "std_msgs/Float32",
+        throttle_rate: 1000,
+        queue_size: 1})
+        STAT_CPU_TEMP.subscribe(function(msg){
+        $('#stats_cpu_temp').text((parseFloat(msg.data) ).toFixed(1) + '℃')
+      })
+
+      var STAT_CPU_LOAD = new ROSLIB.Topic({
+        ros : ros,
+        name: "/stats/cpu_utility",
+        messageType : "std_msgs/Float32MultiArray",
+        throttle_rate: 1000,
+        queue_size: 1})
+        STAT_CPU_LOAD.subscribe(function(msg){
+          cpu_util = msg.data
+          cpu_util = cpu_util.map(a => ' ' + a.toFixed(0).toString() + '%');
+        $('#stats_cpu_load').text(cpu_util.toString())
+      })
+
+      var STAT_MEM_RAM_LOAD = new ROSLIB.Topic({
+        ros : ros,
+        name: "/stats/mem_utility",
+        messageType : "std_msgs/Float32",
+        throttle_rate: 1000,
+        queue_size: 1})
+        STAT_MEM_RAM_LOAD.subscribe(function(msg){
+        $('#stats_mem_ram_load').text((parseFloat(msg.data) ).toFixed(1) + '%')
+      })
+
+      var STAT_MEM_SWAP_LOAD = new ROSLIB.Topic({
+        ros : ros,
+        name: "/stats/mem_swap_utility",
+        messageType : "std_msgs/Float32",
+        throttle_rate: 1000,
+        queue_size: 1})
+        STAT_MEM_SWAP_LOAD.subscribe(function(msg){
+        $('#stats_mem_swap_load').text((parseFloat(msg.data) ).toFixed(1) + '%')
+      })
+
+      var STAT_HAS_INTERNET = new ROSLIB.Topic({
+        ros : ros,
+        name: "/stats/has_internet",
+        messageType : "std_msgs/Bool",
+        throttle_rate: 1000,
+        queue_size: 1})
+        STAT_HAS_INTERNET.subscribe(function(msg){
+          if (msg.data) $('#stats_has_internet').text('Connected');
+          else $('#stats_has_internet').text('Not connected');
+      })
+
+      var STAT_HAS_SSH = new ROSLIB.Topic({
+        ros : ros,
+        name: "/stats/has_ssh",
+        messageType : "std_msgs/Bool",
+        throttle_rate: 1000,
+        queue_size: 1})
+        STAT_HAS_SSH.subscribe(function(msg){
+          if (msg.data) $('#stats_has_ssh').text('Connected');
+          else $('#stats_has_ssh').text('Not connected');
+      })
+
+      /*
+        Danger zone section
+      */
+      var SEND_SYSTEM_SHUTDOWN_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name : '/shutdown',
+        messageType : 'std_msgs/Empty',
+        queue_size: 1
+      });
+      SEND_SYSTEM_SHUTDOWN_TOPIC.advertise();
+      $('#shutdown_button').on('change', function() {
+        if (this.value == 'shutdown') {
+          SEND_SYSTEM_SHUTDOWN_TOPIC.publish();
+        }
+      });
+      var SEND_SYSTEM_REBOOT_TOPIC = new ROSLIB.Topic({
+        ros : ros,
+        name : '/reboot',
+        messageType : 'std_msgs/Empty'
+      });
+      SEND_SYSTEM_REBOOT_TOPIC.advertise();
+      $('#reboot_button').on('change', function() {
+        if (this.value == 'reboot') {
+          SEND_SYSTEM_REBOOT_TOPIC.publish();
+        }
+      });
+      
+
+    });
+      
+  </script>
+</head>
+
+
+
+
+<body>
+  <div data-role="page" id="main">
+    <div data-role="header">
+      <center><img src="AILab_logo__line.png" height="40px" style="float: left; vertical-align: text-top;"></img><h1 style="vertical-align: text-bottom;">CamAlien</h1></center>
+    </div><!-- /header -->
+    <div data-role="content" style="padding: 0.0em">
+      <div class="content-primary" >
+
+        <div data-collapsed="true">
+          <h3 class="ui-bar ui-bar-a ui-corner-all" style="margin:0%"><span id="previewTitle">Preview</span><div id="LEDs" style="float:inline-end"><span id="LedGreen">⬤</span><span id="LedYellow">⬤</span><span id="LedRed">⬤</span></div></h3>
+          <script>
+            document.write('<center><img id="streamWebcamId" src="' + streamImageRawSrc.toString() + '" width="100%"></img></center>');
+          </script>
+         </div>
+
+        <div class="ui-grid-a">
+        <button id="sendShutter" style="margin:0%">
+          <span class="ui-button-text" id="sendShutterTxt">Trigger camera</span>
+        </button>
+        <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:40px">Continuous recording</div></div>
+            <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:40px">
+              <select name="continuous_recording" id="continuous_recording" data-role="slider">
+                <option value="off" selected>Off</option>
+                <option value="on">On</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="ui-grid-a">
+              <!-- <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:30px">Status</div></div> -->
+              <!-- <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:30px" id="ros_stat">N/A</div> -->
+              <!-- <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="min-height:80px">Status</div></div>
+              <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="min-height:80px">
+				            <textarea id="ros_stat" cols="50" rows="5" data-autogrow="true" style="overflow:scroll"></textarea>
+			        </div></div> -->
+              <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:30px">Image queue</div></div>
+              <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:30px" id="obj_blur_queue">N/A</div></div>
+              <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:30px">Stored images</div></div>
+              <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:30px" id="stored_image_count">N/A</div></div>
+        </div>
+        <div class="ui-grid-a">
+            <textarea id="ros_stat" cols="50" rows="5" data-autogrow="true" style="overflow:scroll"></textarea>
+         </div>
+        <div data-role="collapsible" data-collapsed="true" data-theme="a">
+          <h3 class="ui-bar ui-bar-a ui-corner-all">GNSS</h3>
+          <div class="ui-grid-a">
+            <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:30px">Latitude</div></div>
+            <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:30px" id="gnss_latitude">N/A</div></div>
+            <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:30px">Longitude</div></div>
+            <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:30px" id="gnss_longitude">N/A</div></div>
+            <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:30px">Altitude</div></div>
+            <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:30px" id="gnss_altitude">N/A</div></div>
+            <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:30px">Speed (m/s)</div></div>
+            <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:30px" id="gnss_speed_ms">N/A</div></div>
+            <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:30px">Speed (km/h)</div></div>
+            <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:30px" id="gnss_speed_kmh">N/A</div></div>
+          </div>
+        </div>
+      <div data-role="collapsible" data-collapsed="true" data-theme="a">
+        <h3 class="ui-bar ui-bar-a ui-corner-all">Computer stats</h3>
+        <div class="ui-grid-a">
+					<div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:30px">Buffer</div></div>
+          <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:30px" id="stats_int_disk">N/A</div></div>
+          <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:30px">Extern SSD</div></div>
+          <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:30px" id="stats_ext_disk">N/A</div></div>
+          <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:30px">Camera temperature</div></div>
+          <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:30px" id="stats_cam_temp">N/A</div></div>
+          <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:30px">CPU temperature</div></div>
+          <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:30px" id="stats_cpu_temp">N/A</div></div>
+          <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:30px">CPU load</div></div>
+          <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:30px" id="stats_cpu_load">N/A</div></div>
+          <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:30px">Memory (RAM) load</div></div>
+          <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:30px" id="stats_mem_ram_load">N/A</div></div>
+          <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:30px">Memory (SWAP) load</div></div>
+          <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:30px" id="stats_mem_swap_load">N/A</div></div>
+          <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:30px">Internet</div></div>
+          <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:30px" id="stats_has_internet">N/A</div></div>
+          <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:30px">Remote support</div></div>
+          <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:30px" id="stats_has_ssh">N/A</div></div>
+        </div>
+      </div>
+      <div data-role="collapsible" data-collapsed="true" data-theme="a">
+        <h3 class="ui-bar ui-bar-a ui-corner-all">Power Off / Reboot</h3>
+        <div class="ui-grid-a">
+					<div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:40px">Power Off</div></div>
+          <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:40px">
+            <select name="shutdown_button" id="shutdown_button" data-role="slider">
+              <option value="power_on" selected></option>
+              <option value="shutdown"></option>
+            </select>
+          </div></div>
+          <div class="ui-block-a"><div class="ui-bar ui-bar-a" style="height:40px">Reboot</div></div>
+          <div class="ui-block-b"><div class="ui-bar ui-bar-a" style="height:40px">
+            <select name="reboot_button" id="reboot_button" data-role="slider">
+              <option value="power_on" selected></option>
+              <option value="reboot"></option>
+            </select>
+          </div></div>
+        </div>
+      </div>
+      <br /><br />
+      <div class="ui-grid-a">
+        <button id="redirectModel" style="margin:0%" onclick="window.location.href='http://192.168.0.1'">
+          <span class="ui-button-text" id="redirectModemTxt">Modem settings</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div><!-- /page -->
+</body>
+</html>
